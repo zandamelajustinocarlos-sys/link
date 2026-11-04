@@ -9,6 +9,8 @@ import {
 
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/supabase";
+import SplashScreen from "@/components/SplashScreen";
+
 
 export default function Guard({
   children,
@@ -49,11 +51,9 @@ export default function Guard({
   }, [router]);
 
   if (!ready) {
-    return (
-      <div className="shell">
-        A verificar sessão...
-      </div>
-    );
+    return 
+      return <SplashScreen />;
+    
   }
 
   return <>{children}</>;

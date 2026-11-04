@@ -1,0 +1,202 @@
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+
+  overflow: hidden;
+  background: #fff7ed;
+
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  width: min(100%, 440px);
+  padding: 32px 28px;
+
+  animation: fadeIn 650ms ease-out both;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.logo {
+  display: inline-block;
+  color: #1e293b;
+
+  font-size: clamp(68px, 13vw, 100px);
+  font-weight: 800;
+  letter-spacing: -6px;
+  line-height: 1.1;
+}
+
+.dot {
+  display: inline-block;
+  color: #ff796f;
+  animation: dotPulse 2.2s ease-in-out infinite;
+}
+
+.tagline {
+  margin: 16px 0 0;
+  color: #64748b;
+
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  width: 100%;
+  margin-top: 76px;
+}
+
+.progressTrack {
+  position: relative;
+  width: min(100%, 220px);
+  height: 4px;
+
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9e1d8;
+}
+
+.progressBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+
+  width: 42%;
+  height: 100%;
+
+  border-radius: inherit;
+  background: #ff796f;
+
+  animation: progressMove 1.8s ease-in-out infinite;
+}
+
+.message {
+  margin: 17px 0 0;
+  color: #94a3b8;
+
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-align: center;
+}
+
+.footer {
+  position: absolute;
+  bottom: max(28px, env(safe-area-inset-bottom));
+  left: 16px;
+  right: 16px;
+
+  color: #94a3b8;
+  font-size: 11px;
+  text-align: center;
+
+  animation: fadeIn 1s ease-out both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes progressMove {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  50% {
+    transform: translateX(170%);
+  }
+
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+/* Smartphones */
+
+@media (max-width: 480px) {
+  .content {
+    padding: 24px;
+  }
+
+  .logo {
+    font-size: 76px;
+    letter-spacing: -5px;
+  }
+
+  .tagline {
+    font-size: 13px;
+  }
+
+  .loading {
+    margin-top: 64px;
+  }
+
+  .progressTrack {
+    width: 180px;
+  }
+
+  .footer {
+    font-size: 10px;
+  }
+}
+
+/* Acessibilidade */
+
+@media (prefers-reduced-motion: reduce) {
+  .content,
+  .footer,
+  .dot,
+  .progressBar {
+    animation: none;
+  }
+
+  .progressBar {
+    width: 100%;
+    transform: none;
+  }
+}

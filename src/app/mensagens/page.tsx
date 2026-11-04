@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -10,6 +11,7 @@ import {
 import Nav from "@/components/Nav";
 import Guard from "@/components/Guard";
 import PresenceStatus from "@/components/PresenceStatus";
+import StudentAvatar from "@/components/StudentAvatar";
 import { db } from "@/lib/supabase";
 
 type Student = {
@@ -46,6 +48,11 @@ export default function Mensagens() {
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
 
+  // Dados dos remetentes das mensagens de grupo.
+  const [senders, setSenders] = useState<
+    Record<string, Student>
+  >({});
+
   const load = useCallback(async () => {
     const s = db();
 
@@ -80,24 +87,26 @@ export default function Mensagens() {
 
     setRooms(roomsResult.data || []);
 
-    const ids = (connectionsResult.data || [])
-      .filter(
-        (connection) =>
-          connection.requester_id === user.id ||
-          connection.addressee_id === user.id
-      )
-      .map((connection) =>
-        connection.requester_id === user.id
-          ? connection.addressee_id
-          : connection.requester_id
-      );
+    const ids = [
+      ...new Set(
+        (connectionsResult.data || [])
+          .filter(
+            (connection) =>
+              connection.requester_id === user.id ||
+              connection.addressee_id === user.id
+          )
+          .map((connection) =>
+            connection.requester_id === user.id
+              ? connection.addressee_id
+              : connection.requester_id
+          )
+      ),
+    ];
 
     if (ids.length > 0) {
       const result = await s
         .from("students")
-        .select(
-          "id,full_name,course,study_year"
-        )
+        .select("id,full_name,course,study_year")
         .in("id", ids);
 
       if (result.error) {
@@ -114,7 +123,7 @@ export default function Mensagens() {
     void load();
   }, [load]);
 
-  // Acompanhar mensagens da conversa seleccionada
+  // Acompanhar mensagens da conversa seleccionada.
   useEffect(() => {
     if (!room) {
       setMsgs([]);
@@ -134,11 +143,12 @@ export default function Mensagens() {
 
       if (!active) return;
 
-      setMsgs(data || []);
-
       if (error) {
         setError(error.message);
+        return;
       }
+
+      setMsgs(data || []);
     }
 
     void refresh();
@@ -151,8 +161,7 @@ export default function Mensagens() {
           event: "INSERT",
           schema: "public",
           table: "messages",
-          filter:
-            "conversation_id=eq." + room,
+          filter: "conversation_id=eq." + room,
         },
         () => {
           void refresh();
@@ -166,7 +175,60 @@ export default function Mensagens() {
     };
   }, [room]);
 
-  // Iniciar conversa individual
+  const activeRoom = rooms.find(
+    (conversation) => conversation.id === room
+  );
+
+  const isGroup = activeRoom?.type === "group";
+
+  // Carregar os nomes dos remetentes nas conversas de grupo.
+  useEffect(() => {
+    if (!isGroup || msgs.length === 0) {
+      return;
+    }
+
+    let active = true;
+
+    async function loadSenders() {
+      const ids = [
+        ...new Set(
+          msgs
+            .map((message) => message.sender_id)
+            .filter((id) => id !== me)
+        ),
+      ];
+
+      if (ids.length === 0) return;
+
+      const { data, error } = await db()
+        .from("students")
+        .select("id,full_name,course,study_year")
+        .in("id", ids);
+
+      if (!active) return;
+
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+      const map: Record<string, Student> = {};
+
+      for (const student of data || []) {
+        map[student.id] = student;
+      }
+
+      setSenders(map);
+    }
+
+    void loadSenders();
+
+    return () => {
+      active = false;
+    };
+  }, [isGroup, msgs, me]);
+
+  // Iniciar conversa individual.
   async function direct(friendId: string) {
     setError("");
 
@@ -188,12 +250,9 @@ export default function Mensagens() {
     setMobileView("chat");
   }
 
-  // Criar grupo
+  // Criar grupo.
   async function group() {
-    if (
-      !groupName.trim() ||
-      selected.length === 0
-    ) {
+    if (!groupName.trim() || selected.length === 0) {
       return;
     }
 
@@ -221,7 +280,7 @@ export default function Mensagens() {
     setMobileView("chat");
   }
 
-  // Enviar mensagem
+  // Enviar mensagem.
   async function send(e: FormEvent) {
     e.preventDefault();
 
@@ -259,10 +318,21 @@ export default function Mensagens() {
     setMsgs(data || []);
   }
 
-  const activeRoom = rooms.find(
-    (conversation) =>
-      conversation.id === room
-  );
+  function getSenderName(senderId: string) {
+    if (senderId === me) return "Tu";
+
+    const sender = senders[senderId];
+
+    if (sender) {
+      return sender.full_name;
+    }
+
+    const friend = friends.find(
+      (student) => student.id === senderId
+    );
+
+    return friend?.full_name || "Estudante";
+  }
 
   return (
     <Guard>
@@ -276,10 +346,7 @@ export default function Mensagens() {
         </p>
 
         {error && (
-          <p
-            className="error"
-            role="alert"
-          >
+          <p className="error" role="alert">
             {error}
           </p>
         )}
@@ -292,13 +359,9 @@ export default function Mensagens() {
           <button
             type="button"
             className={
-              mobileView === "list"
-                ? "active"
-                : ""
+              mobileView === "list" ? "active" : ""
             }
-            onClick={() =>
-              setMobileView("list")
-            }
+            onClick={() => setMobileView("list")}
           >
             Conversas
           </button>
@@ -306,13 +369,9 @@ export default function Mensagens() {
           <button
             type="button"
             className={
-              mobileView === "chat"
-                ? "active"
-                : ""
+              mobileView === "chat" ? "active" : ""
             }
-            onClick={() =>
-              setMobileView("chat")
-            }
+            onClick={() => setMobileView("chat")}
             disabled={!room}
           >
             Chat
@@ -320,9 +379,7 @@ export default function Mensagens() {
         </div>
 
         <div
-          className={
-            `grid chat-layout mobile-${mobileView}`
-          }
+          className={`grid chat-layout mobile-${mobileView}`}
         >
           {/* Lista de contactos e grupos */}
           <aside className="card chat-sidebar">
@@ -336,29 +393,47 @@ export default function Mensagens() {
                   width: "100%",
                   border: 0,
                   textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
                 }}
-                onClick={() =>
-                  direct(friend.id)
-                }
+                onClick={() => direct(friend.id)}
               >
-                <div>
-                  💬 {friend.full_name}
-                </div>
+                <StudentAvatar
+                  name={friend.full_name}
+                  size={46}
+                />
 
-                <div>
-                  <PresenceStatus
-                    studentId={friend.id}
-                  />
-                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      marginBottom: 4,
+                    }}
+                  >
+                    {friend.full_name}
+                  </div>
 
-                <small className="muted">
-                  {friend.course ||
-                    "Curso não informado"}
-                  {" · "}
-                  {friend.study_year
-                    ? `${friend.study_year}.º ano`
-                    : "Ano não informado"}
-                </small>
+                  <div style={{ marginBottom: 4 }}>
+                    <PresenceStatus
+                      studentId={friend.id}
+                    />
+                  </div>
+
+                  <small className="muted">
+                    {friend.course ||
+                      "Curso não informado"}
+                    {" · "}
+                    {friend.study_year
+                      ? `${friend.study_year}.º ano`
+                      : "Ano não informado"}
+                  </small>
+                </div>
               </button>
             ))}
 
@@ -383,32 +458,32 @@ export default function Mensagens() {
               <label
                 key={friend.id}
                 style={{
-                  display: "block",
-                  marginBottom: 9,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 10,
                 }}
               >
                 <input
                   type="checkbox"
-                  checked={selected.includes(
-                    friend.id
-                  )}
+                  checked={selected.includes(friend.id)}
                   onChange={(e) =>
                     setSelected((current) =>
                       e.target.checked
-                        ? [
-                            ...current,
-                            friend.id,
-                          ]
+                        ? [...current, friend.id]
                         : current.filter(
-                            (id) =>
-                              id !== friend.id
+                            (id) => id !== friend.id
                           )
                     )
                   }
                 />
 
-                {" "}
-                {friend.full_name}
+                <StudentAvatar
+                  name={friend.full_name}
+                  size={30}
+                />
+
+                <span>{friend.full_name}</span>
               </label>
             ))}
 
@@ -438,31 +513,49 @@ export default function Mensagens() {
                       ? "2px solid #FFB547"
                       : 0,
                   textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
                 }}
                 onClick={() => {
                   setRoom(conversation.id);
                   setMobileView("chat");
                 }}
               >
-                {conversation.type === "group"
-                  ? "👥"
-                  : "💬"}
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    minWidth: 42,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background:
+                      conversation.type === "group"
+                        ? "#DCFCE7"
+                        : "#FFE4DB",
+                    color: "#1E293B",
+                    fontSize: 19,
+                  }}
+                >
+                  {conversation.type === "group"
+                    ? "👥"
+                    : "💬"}
+                </div>
 
-                {" "}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>
+                    {conversation.name ||
+                      "Conversa privada"}
+                  </div>
 
-                {conversation.name ||
-                  "Conversa privada"}
-
-                {" "}
-
-                <small className="muted">
-                  (
-                  {conversation.id.slice(
-                    0,
-                    6
-                  )}
-                  )
-                </small>
+                  <small className="muted">
+                    {conversation.type === "group"
+                      ? "Grupo"
+                      : "Conversa individual"}
+                  </small>
+                </div>
               </button>
             ))}
           </aside>
@@ -504,41 +597,76 @@ export default function Mensagens() {
                 padding: 8,
               }}
             >
-              {msgs.map((message) => (
-                <div
-                  key={message.id}
-                  className={
-                    "bubble " +
-                    (
-                      message.sender_id === me
-                        ? "mine"
-                        : ""
-                    )
-                  }
-                >
-                  <small className="muted">
-                    {message.sender_id === me
-                      ? "Tu"
-                      : "Estudante"}
+              {msgs.map((message) => {
+                const isMine =
+                  message.sender_id === me;
 
-                    {" · "}
+                const senderName = getSenderName(
+                  message.sender_id
+                );
 
-                    {new Date(
-                      message.created_at
-                    ).toLocaleTimeString(
-                      "pt-MZ",
-                      {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      }
+                return (
+                  <div
+                    key={message.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-end",
+                      justifyContent: isMine
+                        ? "flex-end"
+                        : "flex-start",
+                      gap: 8,
+                      marginBottom: 12,
+                    }}
+                  >
+                    {/* Avatar apenas nos grupos */}
+                    {isGroup && !isMine && (
+                      <StudentAvatar
+                        name={senderName}
+                        size={30}
+                      />
                     )}
-                  </small>
 
-                  <div>
-                    {message.content}
+                    <div
+                      className={
+                        "bubble " +
+                        (isMine ? "mine" : "")
+                      }
+                      style={{
+                        maxWidth: "78%",
+                        minWidth: 0,
+                      }}
+                    >
+                      <small className="muted">
+                        {isMine
+                          ? "Tu"
+                          : isGroup
+                            ? senderName
+                            : "Estudante"}
+
+                        {" · "}
+
+                        {new Date(
+                          message.created_at
+                        ).toLocaleTimeString(
+                          "pt-MZ",
+                          {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }
+                        )}
+                      </small>
+
+                      <div
+                        style={{
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {message.content}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Formulário de envio */}
@@ -551,7 +679,11 @@ export default function Mensagens() {
             >
               <input
                 className="field"
-                style={{ margin: 0 }}
+                style={{
+                  margin: 0,
+                  minWidth: 0,
+                  flex: 1,
+                }}
                 disabled={!room}
                 value={text}
                 onChange={(e) =>
