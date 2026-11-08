@@ -11,7 +11,6 @@ import { useRouter } from "next/navigation";
 import { db } from "@/lib/supabase";
 import SplashScreen from "@/components/SplashScreen";
 
-
 export default function Guard({
   children,
 }: {
@@ -36,7 +35,12 @@ export default function Guard({
         }
 
         setReady(true);
-      } catch {
+      } catch (error) {
+        console.error(
+          "Erro ao verificar sessão:",
+          error
+        );
+
         if (active) {
           router.replace("/login");
         }
@@ -51,9 +55,7 @@ export default function Guard({
   }, [router]);
 
   if (!ready) {
-    return 
-      return <SplashScreen />;
-    
+    return <SplashScreen />;
   }
 
   return <>{children}</>;
