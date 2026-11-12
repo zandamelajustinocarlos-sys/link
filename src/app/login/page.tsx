@@ -104,6 +104,15 @@ export default function Login() {
             Criar conta
           </Link>
         </p>
+<p>
+<Link
+  href="/recuperar-senha"
+  className="link-forgot-password"
+>
+  Esqueceste-te da palavra-passe?
+</Link>
+</p>
+
       </form>
     </main>
   );
