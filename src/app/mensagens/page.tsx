@@ -1,5 +1,6 @@
 
 "use client";
+
 import {
   useCallback,
   useEffect,
@@ -9,28 +10,38 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
+
 import Nav from "@/components/Nav";
 import Guard from "@/components/Guard";
 import StudentAvatar from "@/components/StudentAvatar";
 import PresenceStatus from "@/components/PresenceStatus";
 import LinkIcon from "@/components/LinkIcon";
 import { db } from "@/lib/supabase";
+
 type Student = {
   id: string;
   full_name: string;
   course: string | null;
   study_year: number | null;
 };
+
 type Connection = {
   requester_id: string;
   addressee_id: string;
   status: string;
 };
+
 type Room = {
   id: string;
   type: string;
   name: string | null;
 };
+
+type ConversationMember = {
+  conversation_id: string;
+  student_id: string;
+};
+
 type Msg = {
   id: string;
   conversation_id: string;
@@ -39,85 +50,123 @@ type Msg = {
   created_at: string;
   edited_at: string | null;
 };
+
 type Conversation = Room & {
   lastMessage: Msg;
   title: string;
   otherStudentId: string | null;
 };
+
 type ReceiptStatus = "sent" | "delivered" | "read";
+
 type SyncResult = {
   unread?: Record<string, number>;
   statuses?: Record<string, ReceiptStatus>;
   hidden?: string[];
 };
+
 function formatTime(value: string) {
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return "";
+
   const now = new Date();
+
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString("pt-MZ", {
       hour: "2-digit",
       minute: "2-digit",
     });
   }
+
   return date.toLocaleDateString("pt-MZ", {
     day: "2-digit",
     month: "2-digit",
   });
 }
+
 export default function Mensagens() {
   const [me, setMe] = useState("");
   const [friends, setFriends] = useState<Student[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [allMessages, setAllMessages] = useState<Msg[]>([]);
+
+  const [conversationMembers, setConversationMembers] =
+    useState<ConversationMember[]>([]);
+
+  const [allMessages, setAllMessages] =
+    useState<Msg[]>([]);
+
   const [senders, setSenders] = useState<
     Record<string, Student>
   >({});
+
   const [room, setRoom] = useState("");
   const [text, setText] = useState("");
   const [search, setSearch] = useState("");
   const [contactSearch, setContactSearch] = useState("");
-  const [composerOpen, setComposerOpen] = useState(false);
+
+  const [composerOpen, setComposerOpen] =
+    useState(false);
+
   const [composerMode, setComposerMode] =
     useState<"direct" | "group">("direct");
+
   const [groupName, setGroupName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+
   const [mobileView, setMobileView] =
     useState<"list" | "chat">("list");
+
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
   const [unread, setUnread] = useState<
     Record<string, number>
   >({});
+
   const [receipts, setReceipts] = useState<
     Record<string, ReceiptStatus>
   >({});
+
   const [hiddenRooms, setHiddenRooms] =
     useState<string[]>([]);
+
   const [editingId, setEditingId] =
     useState<string | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const roomRef = useRef("");
   const meRef = useRef("");
+
+  // ==================================================
+  // CARREGAR CONVERSAS, PARTICIPANTES E MENSAGENS
+  // ==================================================
+
   const load = useCallback(
     async (showLoading = false) => {
       if (showLoading) setLoading(true);
+
       try {
         const s = db();
+
         const {
           data: { user },
           error: authError,
         } = await s.auth.getUser();
+
         if (authError || !user) {
           setError("Sessão não encontrada.");
           return;
         }
+
         setMe(user.id);
         meRef.current = user.id;
+
         const [connectionsResult, roomsResult] =
           await Promise.all([
             s.from("connections")
@@ -125,22 +174,28 @@ export default function Mensagens() {
                 "requester_id,addressee_id,status"
               )
               .eq("status", "accepted"),
+
             s.from("conversations")
               .select("id,type,name"),
           ]);
+
         if (connectionsResult.error) {
           throw connectionsResult.error;
         }
+
         if (roomsResult.error) {
           throw roomsResult.error;
         }
+
         const connections =
           (connectionsResult.data || []) as Connection[];
+
         const visibleConnections = connections.filter(
           (connection) =>
             connection.requester_id === user.id ||
             connection.addressee_id === user.id
         );
+
         const friendIds = [
           ...new Set(
             visibleConnections.map((connection) =>
@@ -150,21 +205,57 @@ export default function Mensagens() {
             )
           ),
         ];
+
         const availableRooms =
           (roomsResult.data || []) as Room[];
+
         setRooms(availableRooms);
+
+        // CORRECÇÃO:
+        // Identificar os participantes de cada conversa
+        // independentemente de quem enviou mensagens.
+
+        const membersResult = availableRooms.length
+          ? await s
+              .from("conversation_members")
+              .select("conversation_id,student_id")
+              .in(
+                "conversation_id",
+                availableRooms.map((item) => item.id)
+              )
+          : {
+              data: [] as ConversationMember[],
+              error: null,
+            };
+
+        if (membersResult.error) {
+          throw membersResult.error;
+        }
+
+        const members =
+          (membersResult.data || []) as ConversationMember[];
+
+        setConversationMembers(members);
+
+        // Sincronizar recibos e mensagens não lidas.
+
         const sync = await s.rpc(
           "link_sync_receipts",
           {
             p_room: roomRef.current || null,
           }
         );
+
         if (sync.error) throw sync.error;
-        const result =
-          sync.data as SyncResult | null;
+
+        const result = sync.data as SyncResult | null;
+
         setUnread(result?.unread || {});
         setReceipts(result?.statuses || {});
         setHiddenRooms(result?.hidden || []);
+
+        // Carregar mensagens existentes.
+
         const messagesResult = availableRooms.length
           ? await s
               .from("messages")
@@ -183,18 +274,35 @@ export default function Mensagens() {
               data: [] as Msg[],
               error: null,
             };
+
         if (messagesResult.error) {
           throw messagesResult.error;
         }
+
         const messages =
           (messagesResult.data || []) as Msg[];
+
         setAllMessages(messages);
+
+        // CORRECÇÃO PRINCIPAL:
+        // Incluir todos os participantes na consulta
+        // de estudantes, mesmo que nunca tenham
+        // enviado mensagens.
+
         const studentIds = [
           ...new Set([
             ...friendIds,
-            ...messages.map((item) => item.sender_id),
+
+            ...members.map(
+              (member) => member.student_id
+            ),
+
+            ...messages.map(
+              (message) => message.sender_id
+            ),
           ]),
         ].filter((id) => id !== user.id);
+
         if (studentIds.length > 0) {
           const studentsResult = await s
             .from("students")
@@ -202,26 +310,32 @@ export default function Mensagens() {
               "id,full_name,course,study_year"
             )
             .in("id", studentIds);
+
           if (studentsResult.error) {
             throw studentsResult.error;
           }
+
           const students =
             (studentsResult.data || []) as Student[];
+
           setFriends(
             students.filter((student) =>
               friendIds.includes(student.id)
             )
           );
-          const studentMap: Record<string, Student> =
-            {};
+
+          const studentMap: Record<string, Student> = {};
+
           students.forEach((student) => {
             studentMap[student.id] = student;
           });
+
           setSenders(studentMap);
         } else {
           setFriends([]);
           setSenders({});
         }
+
         setError("");
       } catch (cause) {
         setError(
@@ -235,9 +349,19 @@ export default function Mensagens() {
     },
     []
   );
+
+  // ==================================================
+  // CARREGAMENTO INICIAL
+  // ==================================================
+
   useEffect(() => {
     void load(true);
   }, [load]);
+
+  // ==================================================
+  // REALTIME E ACTUALIZAÇÃO PERIÓDICA
+  // ==================================================
+
   useEffect(() => {
     const channel = db()
       .channel("link-messages-dashboard")
@@ -255,37 +379,52 @@ export default function Mensagens() {
             "sender_id" in payload.new &&
             payload.new.sender_id !== meRef.current
           ) {
-            setNotice("Recebeste uma nova mensagem.");
+            setNotice(
+              "Recebeste uma nova mensagem."
+            );
           }
+
           void load();
         }
       )
       .subscribe();
+
     function refreshOnFocus() {
       void load();
     }
+
     window.addEventListener(
       "focus",
       refreshOnFocus
     );
+
     const poll = window.setInterval(() => {
       void load();
     }, 12000);
+
     return () => {
       window.removeEventListener(
         "focus",
         refreshOnFocus
       );
+
       window.clearInterval(poll);
       void db().removeChannel(channel);
     };
   }, [load]);
+
+  // ==================================================
+  // ORGANIZAR CONVERSAS PELA ÚLTIMA MENSAGEM
+  // ==================================================
+
   const conversations = useMemo(() => {
     const latest = new Map<string, Msg>();
+
     for (const message of allMessages) {
       const previous = latest.get(
         message.conversation_id
       );
+
       if (
         !previous ||
         new Date(message.created_at).getTime() >
@@ -297,41 +436,50 @@ export default function Mensagens() {
         );
       }
     }
+
     const result: Conversation[] = [];
+
     for (const item of rooms) {
       const lastMessage = latest.get(item.id);
+
       if (
         !lastMessage ||
         hiddenRooms.includes(item.id)
       ) {
         continue;
       }
+
+      // CORRECÇÃO:
+      // Procurar o outro participante directamente
+      // na tabela conversation_members.
+
       const otherStudentId =
         item.type === "group"
           ? null
-          : allMessages
-              .filter(
-                (message) =>
-                  message.conversation_id === item.id &&
-                  message.sender_id !== me
-              )
-              .map((message) => message.sender_id)[0] ||
-            null;
+          : conversationMembers.find(
+              (member) =>
+                member.conversation_id === item.id &&
+                member.student_id !== me
+            )?.student_id || null;
+
       const otherStudent = otherStudentId
         ? senders[otherStudentId]
         : null;
+
+      const title =
+        item.type === "group"
+          ? item.name || "Grupo sem nome"
+          : otherStudent?.full_name ||
+            "Estudante indisponível";
+
       result.push({
         ...item,
         lastMessage,
         otherStudentId,
-        title:
-          item.type === "group"
-            ? item.name || "Grupo sem nome"
-            : otherStudent?.full_name ||
-              item.name ||
-              "Conversa privada",
+        title,
       });
     }
+
     return result.sort(
       (a, b) =>
         new Date(
@@ -347,20 +495,34 @@ export default function Mensagens() {
     senders,
     me,
     hiddenRooms,
+    conversationMembers,
   ]);
+
+  // ==================================================
+  // PESQUISA DE CONVERSAS
+  // ==================================================
+
   const filteredConversations =
     conversations.filter((item) =>
       `${item.title} ${item.lastMessage.content}`
         .toLowerCase()
         .includes(search.trim().toLowerCase())
     );
+
   const activeRoom = rooms.find(
     (item) => item.id === room
   );
+
   const activeConversation = conversations.find(
     (item) => item.id === room
   );
+
   const isGroup = activeRoom?.type === "group";
+
+  // ==================================================
+  // MENSAGENS DA CONVERSA SELECCIONADA
+  // ==================================================
+
   const msgs = useMemo(
     () =>
       allMessages
@@ -375,42 +537,82 @@ export default function Mensagens() {
         ),
     [allMessages, room]
   );
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "end",
     });
   }, [msgs.length, room]);
+
+  // ==================================================
+  // PESQUISAR CONEXÕES ACEITES
+  // ==================================================
+
   const filteredFriends = friends.filter(
     (friend) =>
       `${friend.full_name} ${friend.course || ""}`
         .toLowerCase()
         .includes(contactSearch.toLowerCase())
   );
+
+  // ==================================================
+  // NAVEGAÇÃO MOBILE
+  // ==================================================
+
   useEffect(() => {
     function handleBrowserBack() {
-      if (window.matchMedia("(max-width: 760px)").matches) {
+      if (
+        window.matchMedia(
+          "(max-width: 760px)"
+        ).matches
+      ) {
         setMobileView("list");
       }
     }
-    window.addEventListener("popstate", handleBrowserBack);
-    return () => window.removeEventListener("popstate", handleBrowserBack);
+
+    window.addEventListener(
+      "popstate",
+      handleBrowserBack
+    );
+
+    return () => {
+      window.removeEventListener(
+        "popstate",
+        handleBrowserBack
+      );
+    };
   }, []);
+
   function openRoom(id: string) {
     if (
-      window.matchMedia("(max-width: 760px)").matches &&
+      window.matchMedia(
+        "(max-width: 760px)"
+      ).matches &&
       mobileView !== "chat"
     ) {
-      window.history.pushState({ linkChat: true }, "", window.location.href);
+      window.history.pushState(
+        { linkChat: true },
+        "",
+        window.location.href
+      );
     }
+
     roomRef.current = id;
+
     setRoom(id);
     setMobileView("chat");
     setComposerOpen(false);
     setNotice("");
     setError("");
+
     void load();
   }
+
+  // ==================================================
+  // ABRIR MODAL DE NOVA CONVERSA
+  // ==================================================
+
   function openComposer() {
     setComposerMode("direct");
     setContactSearch("");
@@ -418,6 +620,11 @@ export default function Mensagens() {
     setGroupName("");
     setComposerOpen(true);
   }
+
+  // ==================================================
+  // CRIAR CONVERSA INDIVIDUAL
+  // ==================================================
+
   async function direct(friendId: string) {
     if (
       !friends.some(
@@ -429,8 +636,10 @@ export default function Mensagens() {
       );
       return;
     }
+
     setCreating(true);
     setError("");
+
     try {
       const { data, error: rpcError } =
         await db().rpc(
@@ -439,8 +648,11 @@ export default function Mensagens() {
             other_student: friendId,
           }
         );
+
       if (rpcError) throw rpcError;
+
       const id = data as string;
+
       await load();
       openRoom(id);
     } catch (cause) {
@@ -453,10 +665,16 @@ export default function Mensagens() {
       setCreating(false);
     }
   }
+
+  // ==================================================
+  // CRIAR GRUPO
+  // ==================================================
+
   async function group() {
     if (!groupName.trim() || !selected.length) {
       return;
     }
+
     if (
       selected.some(
         (id) =>
@@ -470,8 +688,10 @@ export default function Mensagens() {
       );
       return;
     }
+
     setCreating(true);
     setError("");
+
     try {
       const { data, error: rpcError } =
         await db().rpc(
@@ -481,9 +701,12 @@ export default function Mensagens() {
             member_ids: selected,
           }
         );
+
       if (rpcError) throw rpcError;
+
       setGroupName("");
       setSelected([]);
+
       await load();
       openRoom(data as string);
     } catch (cause) {
@@ -496,6 +719,11 @@ export default function Mensagens() {
       setCreating(false);
     }
   }
+
+  // ==================================================
+  // EDITAR MENSAGEM
+  // ==================================================
+
   async function saveEdit() {
     if (
       !editingId ||
@@ -504,7 +732,9 @@ export default function Mensagens() {
     ) {
       return;
     }
+
     setSavingEdit(true);
+
     try {
       const { error: rpcError } =
         await db().rpc(
@@ -514,9 +744,12 @@ export default function Mensagens() {
             p_content: text.trim(),
           }
         );
+
       if (rpcError) throw rpcError;
+
       setEditingId(null);
       setText("");
+
       await load();
     } catch (cause) {
       setError(
@@ -528,14 +761,22 @@ export default function Mensagens() {
       setSavingEdit(false);
     }
   }
+
+  // ==================================================
+  // ELIMINAR CONVERSA DA LISTA
+  // ==================================================
+
   async function hideConversation() {
     if (!room) return;
+
     const confirmed = window.confirm(
       "Eliminar esta conversa da tua lista? " +
-      "As mensagens continuarão disponíveis " +
-      "aos outros participantes."
+        "As mensagens continuarão disponíveis " +
+        "aos outros participantes."
     );
+
     if (!confirmed) return;
+
     const { error: rpcError } =
       await db().rpc(
         "link_hide_conversation",
@@ -543,24 +784,36 @@ export default function Mensagens() {
           p_room: room,
         }
       );
+
     if (rpcError) {
       setError(rpcError.message);
       return;
     }
+
     roomRef.current = "";
+
     setRoom("");
     setMobileView("list");
+
     await load();
   }
+
+  // ==================================================
+  // ENVIAR MENSAGEM
+  // ==================================================
+
   async function send(
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
     if (editingId) {
       await saveEdit();
       return;
     }
+
     const content = text.trim();
+
     if (
       !content ||
       !room ||
@@ -569,8 +822,10 @@ export default function Mensagens() {
     ) {
       return;
     }
+
     setSending(true);
     setError("");
+
     try {
       const { error: insertError } =
         await db()
@@ -580,8 +835,11 @@ export default function Mensagens() {
             sender_id: me,
             content,
           });
+
       if (insertError) throw insertError;
+
       setText("");
+
       await load();
     } catch (cause) {
       setError(
@@ -593,17 +851,25 @@ export default function Mensagens() {
       setSending(false);
     }
   }
+
   function getSenderName(id: string) {
     if (id === me) return "Tu";
+
     return (
       senders[id]?.full_name ||
       "Estudante"
     );
   }
+
+  // ==================================================
+  // INTERFACE
+  // ==================================================
+
   return (
     <Guard>
       <main className="shell link-messages-page">
         <Nav />
+
         <div className="link-messages-heading">
           <div>
             <h1>Mensagens</h1>
@@ -612,12 +878,16 @@ export default function Mensagens() {
             </p>
           </div>
         </div>
+
+        {/* NOTIFICAÇÃO */}
+
         {notice && (
           <div
             className="link-chat-notice"
             role="status"
           >
             <span>{notice}</span>
+
             <button
               type="button"
               onClick={() => setNotice("")}
@@ -627,12 +897,16 @@ export default function Mensagens() {
             </button>
           </div>
         )}
+
+        {/* ERROS */}
+
         {error && (
           <div
             className="link-chat-error"
             role="alert"
           >
             {error}
+
             <button
               type="button"
               onClick={() => setError("")}
@@ -642,12 +916,16 @@ export default function Mensagens() {
             </button>
           </div>
         )}
+
         <div
           className={`link-chat-layout mobile-${mobileView}`}
         >
+          {/* LISTA DE CONVERSAS */}
+
           <aside className="link-chat-list">
             <div className="link-chat-list-header">
               <h2>Conversas</h2>
+
               <button
                 type="button"
                 className="link-new-chat"
@@ -661,11 +939,15 @@ export default function Mensagens() {
                 />
               </button>
             </div>
+
+            {/* PESQUISA */}
+
             <div className="link-chat-search">
               <LinkIcon
                 name="search"
                 size={19}
               />
+
               <input
                 type="search"
                 placeholder="Pesquisar conversas"
@@ -676,6 +958,9 @@ export default function Mensagens() {
                 aria-label="Pesquisar conversas"
               />
             </div>
+
+            {/* CONVERSAS EXISTENTES */}
+
             <div className="link-chat-conversations">
               {loading ? (
                 <p className="link-chat-empty">
@@ -687,11 +972,13 @@ export default function Mensagens() {
                     name="messages"
                     size={32}
                   />
+
                   <p>
                     {search
                       ? "Nenhuma conversa encontrada."
                       : "Ainda não tens conversas iniciadas."}
                   </p>
+
                   {!search && (
                     <button
                       type="button"
@@ -717,6 +1004,8 @@ export default function Mensagens() {
                         openRoom(conversation.id)
                       }
                     >
+                      {/* AVATAR */}
+
                       {conversation.type === "group" ? (
                         <span className="link-chat-group-avatar">
                           <LinkIcon
@@ -730,11 +1019,15 @@ export default function Mensagens() {
                           size={46}
                         />
                       )}
+
+                      {/* INFORMAÇÕES */}
+
                       <span className="link-chat-row-main">
                         <span className="link-chat-row-top">
                           <strong>
                             {conversation.title}
                           </strong>
+
                           <time>
                             {formatTime(
                               conversation.lastMessage
@@ -742,6 +1035,7 @@ export default function Mensagens() {
                             )}
                           </time>
                         </span>
+
                         <span className="link-chat-row-bottom">
                           <span
                             className={`link-chat-preview ${
@@ -754,11 +1048,15 @@ export default function Mensagens() {
                               .sender_id === me
                               ? "Tu: "
                               : ""}
+
                             {
                               conversation.lastMessage
                                 .content
                             }
                           </span>
+
+                          {/* CONTADOR DE NÃO LIDAS */}
+
                           {(unread[conversation.id] || 0) >
                             0 && (
                             <span
@@ -780,6 +1078,9 @@ export default function Mensagens() {
               )}
             </div>
           </aside>
+
+          {/* PAINEL DA CONVERSA */}
+
           <section className="link-chat-panel">
             {!room ? (
               <div className="link-chat-placeholder">
@@ -789,13 +1090,16 @@ export default function Mensagens() {
                     size={44}
                   />
                 </span>
+
                 <h2>
                   As tuas conversas, num só lugar.
                 </h2>
+
                 <p>
                   Selecciona uma conversa ou inicia
                   uma nova com um estudante conectado.
                 </p>
+
                 <button
                   type="button"
                   className="btn"
@@ -806,6 +1110,8 @@ export default function Mensagens() {
               </div>
             ) : (
               <>
+                {/* CABEÇALHO DO CHAT */}
+
                 <header className="link-chat-panel-header">
                   {isGroup ? (
                     <span className="link-chat-group-avatar">
@@ -823,14 +1129,16 @@ export default function Mensagens() {
                       size={40}
                     />
                   )}
+
                   <div className="link-chat-contact">
                     <strong>
                       {activeConversation?.title ||
                         activeRoom?.name ||
                         (isGroup
                           ? "Grupo"
-                          : "Conversa privada")}
+                          : "Estudante indisponível")}
                     </strong>
+
                     {isGroup ? (
                       <small>Conversa em grupo</small>
                     ) : activeConversation?.otherStudentId ? (
@@ -845,6 +1153,9 @@ export default function Mensagens() {
                       </small>
                     )}
                   </div>
+
+                  {/* PERFIL DO ESTUDANTE */}
+
                   {!isGroup &&
                     activeConversation?.otherStudentId && (
                       <Link
@@ -854,6 +1165,9 @@ export default function Mensagens() {
                         Ver perfil
                       </Link>
                     )}
+
+                  {/* ELIMINAR CONVERSA */}
+
                   <button
                     type="button"
                     className="link-chat-delete"
@@ -865,18 +1179,24 @@ export default function Mensagens() {
                     Eliminar
                   </button>
                 </header>
+
+                {/* HISTÓRICO DE MENSAGENS */}
+
                 <div className="link-chat-messages">
                   {msgs.length === 0 && (
                     <div className="link-chat-start">
                       <p>Início da conversa.</p>
+
                       <small>
                         Envia uma mensagem para começar.
                       </small>
                     </div>
                   )}
+
                   {msgs.map((message) => {
                     const mine =
                       message.sender_id === me;
+
                     const canEdit =
                       mine &&
                       Date.now() -
@@ -884,9 +1204,11 @@ export default function Mensagens() {
                           message.created_at
                         ).getTime() <=
                         15 * 60 * 1000;
+
                     const status =
                       receipts[message.id] ||
                       "sent";
+
                     return (
                       <div
                         key={message.id}
@@ -894,6 +1216,8 @@ export default function Mensagens() {
                           mine ? "mine-row" : ""
                         }`}
                       >
+                        {/* AVATAR NOS GRUPOS */}
+
                         {isGroup && !mine && (
                           <StudentAvatar
                             name={getSenderName(
@@ -902,6 +1226,9 @@ export default function Mensagens() {
                             size={28}
                           />
                         )}
+
+                        {/* BALÃO DA MENSAGEM */}
+
                         <div
                           className={`link-message-bubble ${
                             mine
@@ -916,16 +1243,24 @@ export default function Mensagens() {
                               )}
                             </strong>
                           )}
+
                           <p>{message.content}</p>
+
+                          {/* METADADOS */}
+
                           <div className="link-message-meta">
                             {message.edited_at && (
                               <small>Editada ·</small>
                             )}
+
                             <time>
                               {formatTime(
                                 message.created_at
                               )}
                             </time>
+
+                            {/* RECIBOS DE LEITURA */}
+
                             {mine && (
                               <span
                                 className={`link-message-receipt ${
@@ -947,6 +1282,9 @@ export default function Mensagens() {
                               </span>
                             )}
                           </div>
+
+                          {/* EDITAR MENSAGEM */}
+
                           {canEdit && (
                             <button
                               type="button"
@@ -963,8 +1301,12 @@ export default function Mensagens() {
                       </div>
                     );
                   })}
+
                   <div ref={bottomRef} />
                 </div>
+
+                {/* CANCELAR EDIÇÃO */}
+
                 {editingId && (
                   <button
                     type="button"
@@ -977,6 +1319,9 @@ export default function Mensagens() {
                     Cancelar edição
                   </button>
                 )}
+
+                {/* CAMPO DE ENVIO */}
+
                 <form
                   className="link-chat-compose"
                   onSubmit={send}
@@ -995,6 +1340,7 @@ export default function Mensagens() {
                     maxLength={4000}
                     aria-label="Escrever mensagem"
                   />
+
                   <button
                     type="submit"
                     disabled={
@@ -1018,6 +1364,9 @@ export default function Mensagens() {
             )}
           </section>
         </div>
+
+        {/* MODAL DE NOVA CONVERSA */}
+
         {composerOpen && (
           <div
             className="link-modal-backdrop"
@@ -1039,6 +1388,7 @@ export default function Mensagens() {
                 <h2 id="new-chat-title">
                   Nova conversa
                 </h2>
+
                 <button
                   type="button"
                   onClick={() =>
@@ -1049,6 +1399,9 @@ export default function Mensagens() {
                   ×
                 </button>
               </div>
+
+              {/* TIPO DE CONVERSA */}
+
               <div className="link-chat-modal-tabs">
                 <button
                   type="button"
@@ -1063,6 +1416,7 @@ export default function Mensagens() {
                 >
                   Individual
                 </button>
+
                 <button
                   type="button"
                   className={
@@ -1077,6 +1431,9 @@ export default function Mensagens() {
                   Novo grupo
                 </button>
               </div>
+
+              {/* NOME DO GRUPO */}
+
               {composerMode === "group" && (
                 <input
                   className="field"
@@ -1088,11 +1445,15 @@ export default function Mensagens() {
                   maxLength={100}
                 />
               )}
+
+              {/* PESQUISAR CONTACTOS */}
+
               <div className="link-chat-search modal-search">
                 <LinkIcon
                   name="search"
                   size={19}
                 />
+
                 <input
                   type="search"
                   placeholder="Pesquisar conexões aceites"
@@ -1104,6 +1465,9 @@ export default function Mensagens() {
                   }
                 />
               </div>
+
+              {/* LISTA DE CONTACTOS */}
+
               <div className="link-chat-contact-list">
                 {filteredFriends.length === 0 ? (
                   <p className="link-chat-empty">
@@ -1124,6 +1488,7 @@ export default function Mensagens() {
                           void direct(friend.id);
                           return;
                         }
+
                         setSelected((current) =>
                           current.includes(friend.id)
                             ? current.filter(
@@ -1141,15 +1506,18 @@ export default function Mensagens() {
                         name={friend.full_name}
                         size={42}
                       />
+
                       <span>
                         <strong>
                           {friend.full_name}
                         </strong>
+
                         <small>
                           {friend.course ||
                             "Curso não informado"}
                         </small>
                       </span>
+
                       {composerMode === "group" && (
                         <input
                           type="checkbox"
@@ -1165,6 +1533,9 @@ export default function Mensagens() {
                   ))
                 )}
               </div>
+
+              {/* CRIAR GRUPO */}
+
               {composerMode === "group" && (
                 <button
                   type="button"
@@ -1181,6 +1552,7 @@ export default function Mensagens() {
                     : `Criar grupo (${selected.length})`}
                 </button>
               )}
+
               <p className="link-chat-modal-note">
                 Apenas estudantes com conexões
                 aceites podem trocar mensagens.
