@@ -368,7 +368,7 @@ export default function EditarPerfilPage() {
                   </option>
 
                   {Array.from(
-                    { length: 10 },
+                    { length: 5 },
                     (_, index) => index + 1
                   ).map((year) => (
                     <option

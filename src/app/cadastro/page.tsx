@@ -159,7 +159,7 @@ export default function Cadastro() {
               setStudyYear(e.target.value)
             }
           >
-            {[1, 2, 3, 4, 5, 6, 7].map(
+            {[1, 2, 3, 4, 5].map(
               (year) => (
                 <option
                   key={year}
